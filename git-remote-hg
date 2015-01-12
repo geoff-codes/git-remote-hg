@@ -16,6 +16,14 @@ from mercurial import hg, ui, bookmarks, context, encoding
 from mercurial import node, error, extensions, discovery, util
 from mercurial import changegroup
 
+# Mercurial 3.2+ "pull" compatibility code lifted from hg-git.
+# But see also: https://github.com/schacon/hg-git/issues/291.
+
+try:
+    from mercurial import exchange
+except ImportError:
+    pass
+
 import re
 import sys
 import os
@@ -430,7 +438,10 @@ def get_repo(url, alias):
             peer = hg.peer(repo.ui, {}, url)
         except:
             die('Repository error')
-        repo.pull(peer, heads=None, force=True)
+        try:
+            exchange.pull(repo, peer, heads=None, force=True)
+        except:
+            repo.pull(peer, heads=None, force=True)
 
         updatebookmarks(repo, peer)
 
@@ -803,7 +814,10 @@ def parse_commit(parser):
     def getfilectx(repo, memctx, f):
         of = files[f]
         if 'deleted' in of:
-            raise IOError
+            if check_version(3, 2):
+                return None
+            else:
+                raise IOError
         if 'ctx' in of:
             return of['ctx']
         is_exec = of['mode'] == 'x'
@@ -1036,10 +1050,13 @@ def push_unsafe(repo, remote, parsed_refs, p_revs):
     if not checkheads(repo, remote, p_revs):
         return None
 
-    if check_version(3, 0):
-        cg = changegroup.getbundle(repo, 'push', heads=list(p_revs), common=common)
-    else:
-        cg = repo.getbundle('push', heads=list(p_revs), common=common)
+    try:
+        cg = changegroup.getchangegroup(repo, 'push', heads=list(p_revs), common=common)
+    except:
+        if check_version(3, 0):
+            cg = changegroup.getbundle(repo, 'push', heads=list(p_revs), common=common)
+        else:
+            cg = repo.getbundle('push', heads=list(p_revs), common=common)
 
     unbundle = remote.capable('unbundle')
     if unbundle:
